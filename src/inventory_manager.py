@@ -107,14 +107,17 @@ class InventoryManager:
                 try:
                     message = await channel.fetch_message(config.inventory_message_id)
                     await message.edit(embed=embed)
-                    return True
                 except discord.NotFound:
                     # Message was deleted, create a new one
                     pass
+            else:
+                # Create new message
+                message = await channel.send(embed=embed)
+                self.db.set_guild_config(guild_id, inventory_message_id=message.id)
 
-            # Create new message
-            message = await channel.send(embed=embed)
-            self.db.set_guild_config(guild_id, inventory_message_id=message.id)
+            # Update pending request messages with new availability
+            await self.update_pending_request_messages(guild_id)
+
             return True
 
         except Exception as e:
@@ -280,6 +283,60 @@ class InventoryManager:
         embed.set_footer(text=f"Request ID: {request.id} • User ID: {request.user_id}")
 
         return embed
+
+    async def update_pending_request_messages(self, guild_id: int) -> None:
+        """Update the availability information in all pending request messages."""
+        try:
+            # Get all pending requests for this guild
+            pending_requests = []
+            # We need to add a method to get pending requests, let's use the database
+            # For now, let's get the guild config to find the inventory channel
+            guild_config = self.db.get_guild_config(guild_id)
+            if not guild_config or not guild_config.inventory_channel_id:
+                return
+
+            channel = self.bot.get_channel(guild_config.inventory_channel_id)
+            if not channel:
+                return
+
+            # Search through recent messages in the inventory channel for pending requests
+            # We'll look at the last 100 messages (Discord API limit for history without pagination)
+            async for message in channel.history(limit=100):
+                if (
+                    message.author == self.bot.user
+                    and message.embeds
+                    and message.embeds[0].title
+                    and "New Item Request #" in message.embeds[0].title
+                    and "🟡 Pending Review" in str(message.embeds[0].fields)
+                ):
+
+                    # Extract request ID from title
+                    import re
+
+                    match = re.search(r"#(\d+)", message.embeds[0].title)
+                    if match:
+                        request_id = int(match.group(1))
+
+                        # Get the request from database to make sure it's still pending
+                        request = self.db.get_request(request_id)
+                        if request and request.status == "pending":
+                            # Update the message with current availability
+                            try:
+                                user = await self.bot.fetch_user(request.user_id)
+                                updated_embed = self.create_public_request_embed(
+                                    request=request, user=user
+                                )
+                                await message.edit(embed=updated_embed)
+                            except Exception as e:
+                                print(
+                                    f"Failed to update request message {message.id}: {e}"
+                                )
+                                continue
+
+            print(f"✅ Updated pending request messages for guild {guild_id}")
+
+        except Exception as e:
+            print(f"Error updating pending request messages for guild {guild_id}: {e}")
 
 
 class PersistentRequestView(ui.View):

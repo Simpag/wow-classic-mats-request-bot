@@ -366,7 +366,7 @@ class AdminCommands(commands.Cog):
 
         # Try to notify the user
         try:
-            user = self.bot.get_user(request.user_id)
+            user = await self.bot.fetch_user(request.user_id)
             if user:
                 user_embed = discord.Embed(
                     title="✅ Request Approved",
