@@ -296,14 +296,13 @@ class AdminCommands(commands.Cog):
                 inline=False,
             )
 
+        footer_txt = ""
         if len(requests) > 10:
-            embed.set_footer(
-                text=f"Showing 10 of {len(requests)} requests. Use the buttons on request messages to approve/deny them."
-            )
-        else:
-            embed.set_footer(
-                text="Use the buttons on request messages to approve/deny them."
-            )
+            footer_txt = f"Showing 10 of {len(requests)} requests. Use the buttons on request messages to approve/deny them. "
+
+        footer_txt += "Use the buttons on request messages to approve/deny them or use '/admin [manual_approve|manual_deny]'."
+
+        embed.set_footer(text=footer_txt)
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

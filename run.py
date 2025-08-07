@@ -12,7 +12,7 @@ from src.database import Database
 from src.commands_inventory import InventoryCommands
 from src.commands_admin import AdminCommands
 from src.commands_owner import OwnerCommands
-from src.inventory_manager import InventoryManager
+from src.inventory_manager import InventoryManager, PersistentRequestView
 
 # Configuration
 TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN")
@@ -30,9 +30,13 @@ class GuildBot(commands.Bot):
 
         # Database setup
         self.database = Database()
-        
+
         # Inventory manager setup
         self.inventory_manager = InventoryManager(self, self.database)
+
+        # Add persistent view for request buttons
+        self.persistent_view = PersistentRequestView()
+        self.add_view(self.persistent_view)
 
     async def setup_hook(self):
         """Setup the bot when it starts."""
@@ -56,6 +60,13 @@ class GuildBot(commands.Bot):
 
         await self.add_cog(OwnerCommands(self, GUILD_ID, OWNER_ID))
         print("✓ Command cogs added successfully")
+
+        # Set up persistent view dependencies after bot is ready
+        print("Step 3: Setting up persistent views...")
+        self.persistent_view.set_dependencies(
+            self, self.database, self.inventory_manager
+        )
+        print("✓ Persistent views configured")
 
         # Debug: Check what commands are in the tree
         print("Commands in tree:")

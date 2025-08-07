@@ -7,10 +7,10 @@ from datetime import datetime
 # Import from local modules
 try:
     from .database import Database
-    from .inventory_manager import InventoryManager, RequestView
+    from .inventory_manager import InventoryManager, PersistentRequestView
 except ImportError:
     from database import Database
-    from inventory_manager import InventoryManager, RequestView
+    from inventory_manager import InventoryManager, PersistentRequestView
 
 
 class InventoryCommands(commands.Cog):
@@ -117,8 +117,8 @@ class InventoryCommands(commands.Cog):
             request, interaction.user
         )
 
-        # Create the view with approve/deny buttons
-        view = RequestView(self.bot, self.db, self.inventory, request_id)
+        # Create the view with approve/deny buttons using persistent view
+        view = PersistentRequestView(self.bot, self.db, self.inventory)
 
         # Post the public request announcement
         try:
