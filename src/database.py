@@ -32,7 +32,6 @@ class GuildConfig:
     inventory_channel_id: Optional[int]
     inventory_message_id: Optional[int]
     admin_role_ids: str  # JSON string of role IDs
-    wow_region: str = "US"  # Default to US region
 
 
 class Database:
@@ -58,8 +57,7 @@ class Database:
                         guild_id INTEGER PRIMARY KEY,
                         inventory_channel_id INTEGER,
                         inventory_message_id INTEGER,
-                        admin_role_ids TEXT DEFAULT '[]',
-                        wow_region TEXT DEFAULT 'US'
+                        admin_role_ids TEXT DEFAULT '[]'
                     )
                 """
                 )
@@ -95,18 +93,6 @@ class Database:
                 )
 
                 conn.commit()
-
-                # Migration: Add wow_region column if it doesn't exist
-                try:
-                    conn.execute(
-                        "ALTER TABLE guild_configs ADD COLUMN wow_region TEXT DEFAULT 'US'"
-                    )
-                    conn.commit()
-                    print("✅ Added wow_region column to guild_configs")
-                except Exception:
-                    # Column already exists, which is fine
-                    pass
-
                 print("✅ Database tables initialized successfully")
 
     # Guild Config Methods
@@ -115,7 +101,7 @@ class Database:
         with self.lock:
             with self.get_connection() as conn:
                 cursor = conn.execute(
-                    "SELECT guild_id, inventory_channel_id, inventory_message_id, admin_role_ids, wow_region FROM guild_configs WHERE guild_id = ?",
+                    "SELECT guild_id, inventory_channel_id, inventory_message_id, admin_role_ids FROM guild_configs WHERE guild_id = ?",
                     (guild_id,),
                 )
                 row = cursor.fetchone()
@@ -125,7 +111,6 @@ class Database:
                         inventory_channel_id=row[1],
                         inventory_message_id=row[2],
                         admin_role_ids=row[3],
-                        wow_region=row[4] if row[4] else "US",
                     )
                 return None
 
@@ -152,9 +137,6 @@ class Database:
                     if "admin_role_ids" in kwargs:
                         updates.append("admin_role_ids = ?")
                         params.append(kwargs["admin_role_ids"])
-                    if "wow_region" in kwargs:
-                        updates.append("wow_region = ?")
-                        params.append(kwargs["wow_region"])
 
                     if updates:
                         params.append(guild_id)
@@ -165,13 +147,12 @@ class Database:
                 else:
                     # Create new config
                     conn.execute(
-                        "INSERT INTO guild_configs (guild_id, inventory_channel_id, inventory_message_id, admin_role_ids, wow_region) VALUES (?, ?, ?, ?, ?)",
+                        "INSERT INTO guild_configs (guild_id, inventory_channel_id, inventory_message_id, admin_role_ids) VALUES (?, ?, ?, ?)",
                         (
                             guild_id,
                             kwargs.get("inventory_channel_id"),
                             kwargs.get("inventory_message_id"),
                             kwargs.get("admin_role_ids", "[]"),
-                            kwargs.get("wow_region", "US"),
                         ),
                     )
 

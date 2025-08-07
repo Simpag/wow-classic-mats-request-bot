@@ -8,209 +8,10 @@ from datetime import datetime
 # Import from local modules
 try:
     from .database import Database
-    from .inventory_manager import InventoryManager, RequestView
-    from .timezone_utils import (
-        format_for_discord,
-        get_wow_time,
-        set_guild_wow_region,
-        get_available_regions,
-    )
+    from .inventory_manager import InventoryManager
 except ImportError:
     from database import Database
-    from inventory_manager import InventoryManager, RequestView
-    from timezone_utils import (
-        format_for_discord,
-        get_wow_time,
-        set_guild_wow_region,
-        get_available_regions,
-    )
-
-
-class InventoryCommands(commands.Cog):
-    def __init__(self, bot, database: Database):
-        self.bot = bot
-        self.db = database
-        self.inventory = InventoryManager(bot, database)
-
-    # User Commands
-    @app_commands.command(
-        name="inventory", description="View the current guild inventory"
-    )
-    async def view_inventory(self, interaction: Interaction):
-        """Display the current inventory."""
-        embed = self.inventory.create_inventory_embed(interaction.guild.id)
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(
-        name="request", description="Request items from the guild inventory"
-    )
-    @app_commands.describe(
-        items="Items to request (format: 'Iron Ore: 50, Copper Ore: 100' or 'Iron Ore 50, Copper Ore 100')"
-    )
-    async def request_items(self, interaction: Interaction, items: str):
-        """Request items from the inventory."""
-        # Parse the items
-        try:
-            requested_items = self.inventory.parse_item_input(items)
-        except Exception as e:
-            await interaction.response.send_message(
-                "❌ Invalid item format. Please use format like: `Iron Ore: 50, Copper Ore: 100`",
-                ephemeral=True,
-            )
-            return
-
-        if not requested_items:
-            await interaction.response.send_message(
-                "❌ No valid items found. Please use format like: `Iron Ore: 50, Copper Ore: 100`",
-                ephemeral=True,
-            )
-            return
-
-        # Check if requested items exist in inventory
-        guild_items = self.db.get_items(interaction.guild.id)
-        guild_item_names = {item.name.lower(): item.name for item in guild_items}
-
-        validated_items = {}
-        invalid_items = []
-
-        for item_name, quantity in requested_items.items():
-            # Case-insensitive search
-            lower_name = item_name.lower()
-            if lower_name in guild_item_names:
-                validated_items[guild_item_names[lower_name]] = quantity
-            else:
-                invalid_items.append(item_name)
-
-        if invalid_items:
-            await interaction.response.send_message(
-                f"❌ The following items are not in the inventory: {', '.join(invalid_items)}\n"
-                f"Use `/inventory` to see available items.",
-                ephemeral=True,
-            )
-            return
-
-        if not validated_items:
-            await interaction.response.send_message(
-                "❌ No valid items found in inventory. Use `/inventory` to see available items.",
-                ephemeral=True,
-            )
-            return
-
-        # Create the request
-        request_id = self.db.create_request(
-            interaction.guild.id,
-            interaction.user.id,
-            interaction.user.display_name,
-            json.dumps(validated_items),
-        )
-
-        # Get the created request for the public announcement
-        request = self.db.get_request(request_id)
-
-        # Create public embed for the request
-        public_embed = self.inventory.create_public_request_embed(
-            request, interaction.user
-        )
-
-        # Create the view with approve/deny buttons
-        view = RequestView(self.bot, self.db, self.inventory, request_id)
-
-        # Try to post in the inventory channel, otherwise post in current channel
-        config = self.db.get_guild_config(interaction.guild.id)
-        target_channel = None
-
-        if config and config.inventory_channel_id:
-            target_channel = self.bot.get_channel(config.inventory_channel_id)
-
-        if not target_channel:
-            target_channel = interaction.channel
-
-        # Post the public request announcement
-        try:
-            await target_channel.send(
-                content=f"📢 **New Guild Item Request**\n{interaction.user.mention} has requested items from the guild inventory:",
-                embed=public_embed,
-                view=view,
-            )
-
-            # Respond to the user with confirmation
-            if target_channel != interaction.channel:
-                await interaction.response.send_message(
-                    f"✅ Your request has been posted in {target_channel.mention} for admin review!",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.response.send_message(
-                    "✅ Your request has been posted for admin review!", ephemeral=True
-                )
-
-        except discord.Forbidden:
-            # Bot doesn't have permissions in inventory channel, post in current channel
-            await interaction.response.send_message(
-                content=f"📢 **New Guild Item Request**\n{interaction.user.mention} has requested items from the guild inventory:",
-                embed=public_embed,
-                view=view,
-            )
-
-        # Send a confirmation DM to the user
-        try:
-            confirmation_embed = discord.Embed(
-                title="📋 Request Submitted",
-                description=f"Your request has been submitted and posted for admin review.",
-                color=discord.Color.blue(),
-            )
-
-            items_text = []
-            for item_name, quantity in validated_items.items():
-                items_text.append(f"**{item_name}**: {quantity:,}")
-
-            confirmation_embed.add_field(
-                name="Requested Items", value="\n".join(items_text), inline=False
-            )
-            confirmation_embed.add_field(
-                name="Request ID", value=f"#{request_id}", inline=True
-            )
-            confirmation_embed.add_field(name="Status", value="Pending", inline=True)
-            confirmation_embed.set_footer(text=f"Server: {interaction.guild.name}")
-
-            await interaction.user.send(embed=confirmation_embed)
-        except:
-            # User might have DMs disabled, which is fine
-            pass
-
-    @app_commands.command(
-        name="my_requests", description="View your pending item requests"
-    )
-    async def my_requests(self, interaction: Interaction):
-        """Show the user's requests."""
-        requests = self.db.get_requests(interaction.guild.id)
-        user_requests = [req for req in requests if req.user_id == interaction.user.id]
-
-        if not user_requests:
-            await interaction.response.send_message(
-                "📭 You have no item requests.", ephemeral=True
-            )
-            return
-
-        embed = discord.Embed(title="📋 Your Item Requests", color=discord.Color.blue())
-
-        for request in user_requests[-10]:  # Show last 10 requests
-            requested_items = json.loads(request.items)
-            items_text = ", ".join(
-                [f"{name} ({qty})" for name, qty in requested_items.items()]
-            )
-
-            status_emoji = {"pending": "🟡", "approved": "🟢", "denied": "🔴"}.get(
-                request.status, "⚪"
-            )
-
-            embed.add_field(
-                name=f"{status_emoji} Request #{request.id} - {request.status.capitalize()}",
-                value=f"{items_text}\nCreated: {format_for_discord(datetime.fromisoformat(request.created_at), guild_id=interaction.guild.id)}",
-                inline=False,
-            )
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    from inventory_manager import InventoryManager
 
 
 # Admin Commands Group
@@ -221,9 +22,14 @@ class AdminCommands(commands.Cog):
         self.inventory = InventoryManager(bot, database)
 
         # Create admin group
+        # Create admin commands group
         self.admin = app_commands.Group(
             name="admin", description="Admin commands for inventory management"
         )
+
+        # Set default permissions to require Manage Guild (less restrictive than Administrator)
+        # This will hide commands from regular users, but server admins can still grant access to specific roles
+        self.admin.default_permissions = discord.Permissions(administrator=True)
 
         # Add commands to group
         self.admin.command(
@@ -256,27 +62,15 @@ class AdminCommands(commands.Cog):
     @app_commands.describe(
         channel="Channel where the inventory will be displayed",
         admin_roles="Comma-separated list of roles that can manage inventory (optional)",
-        timezone="WoW server timezone (US=Pacific, EU=Central European, OCE=Australian Eastern)",
-    )
-    @app_commands.choices(
-        timezone=[
-            app_commands.Choice(name="US - Pacific Time (PST/PDT)", value="US"),
-            app_commands.Choice(
-                name="EU - Central European Time (CET/CEST)", value="EU"
-            ),
-            app_commands.Choice(
-                name="OCE - Australian Eastern Time (AEST/AEDT)", value="OCE"
-            ),
-        ]
     )
     async def setup(
         self,
         interaction: Interaction,
         channel: discord.TextChannel,
         admin_roles: Optional[str] = None,
-        timezone: Optional[str] = "US",
     ):
         """Setup the inventory system."""
+        # Only Discord administrators can perform initial setup
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
                 "❌ You need Administrator permissions to setup the inventory system.",
@@ -300,11 +94,7 @@ class AdminCommands(commands.Cog):
             guild_id,
             inventory_channel_id=channel.id,
             admin_role_ids=json.dumps(admin_role_ids),
-            wow_region=timezone,
         )
-
-        # Set the timezone for this guild
-        set_guild_wow_region(guild_id, timezone)
 
         # Create initial inventory display
         success = await self.inventory.update_inventory_display(guild_id)
@@ -326,25 +116,13 @@ class AdminCommands(commands.Cog):
                 name="Admin Roles", value="Server Administrators only", inline=False
             )
 
-        # Show timezone info
-        timezone_names = {
-            "US": "US - Pacific Time (PST/PDT)",
-            "EU": "EU - Central European Time (CET/CEST)",
-            "OCE": "OCE - Australian Eastern Time (AEST/AEDT)",
-        }
-        embed.add_field(
-            name="WoW Server Timezone",
-            value=timezone_names.get(timezone, f"{timezone} timezone"),
-            inline=False,
-        )
-
         embed.add_field(
             name="Next Steps",
-            value="• Use `/admin add_item` to add items to inventory\n• Users can use `/request` to request items\n• Use `/admin` commands to manage requests",
+            value="• Use `/admin add_item` to add items to inventory\n• Users can use `/request` to request items\n• Use `/admin` commands to manage requests\n• Go to Server Settings > Integrations > Bot Name to grant `/admin` command access to the specified roles",
             inline=False,
         )
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
         if success:
             await channel.send(
@@ -382,7 +160,7 @@ class AdminCommands(commands.Cog):
             if description:
                 embed.add_field(name="Description", value=description, inline=True)
 
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.inventory.update_inventory_display(interaction.guild.id)
         else:
             await interaction.response.send_message(
@@ -418,7 +196,7 @@ class AdminCommands(commands.Cog):
             embed.add_field(name="Old Quantity", value=f"{old_quantity:,}", inline=True)
             embed.add_field(name="New Quantity", value=f"{quantity:,}", inline=True)
 
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.inventory.update_inventory_display(interaction.guild.id)
         else:
             await interaction.response.send_message(
@@ -457,7 +235,7 @@ class AdminCommands(commands.Cog):
                 name="New Total", value=f"{old_quantity + quantity:,}", inline=True
             )
 
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.inventory.update_inventory_display(interaction.guild.id)
         else:
             await interaction.response.send_message(
@@ -481,7 +259,7 @@ class AdminCommands(commands.Cog):
                 description=f"**{name}** has been removed from inventory.",
                 color=discord.Color.red(),
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.inventory.update_inventory_display(interaction.guild.id)
         else:
             await interaction.response.send_message(
@@ -514,7 +292,7 @@ class AdminCommands(commands.Cog):
 
             embed.add_field(
                 name=f"Request #{request.id} by {request.user_name}",
-                value=f"{items_text}\n{format_for_discord(datetime.fromisoformat(request.created_at), guild_id=interaction.guild.id)}",
+                value=f"{items_text}\n{datetime.fromisoformat(request.created_at).strftime('%Y-%m-%d %H:%M:%S')}",
                 inline=False,
             )
 
@@ -585,7 +363,7 @@ class AdminCommands(commands.Cog):
             text="💡 Tip: Use the buttons on request messages for easier approval!"
         )
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
         # Try to notify the user
         try:

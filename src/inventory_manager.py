@@ -3,7 +3,7 @@ import discord
 from discord import Embed, Color, ui, ButtonStyle
 from discord.ext import commands
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 try:
     from .database import Database, Item, ItemRequest
@@ -121,52 +121,6 @@ class InventoryManager:
             print(f"Error updating inventory display for guild {guild_id}: {e}")
             return False
 
-    def create_request_embed(self, request: ItemRequest) -> Embed:
-        """Create an embed for a item request."""
-        requested_items = json.loads(request.items)
-
-        # Determine embed color based on status
-        color_map = {
-            "pending": Color.orange(),
-            "approved": Color.green(),
-            "denied": Color.red(),
-        }
-
-        embed = Embed(
-            title=f"📋 Item Request #{request.id}",
-            description=f"Request by {request.user_name}",
-            color=color_map.get(request.status, Color.grey()),
-            timestamp=datetime.fromisoformat(request.created_at),
-        )
-
-        # Add requested items
-        items_text = []
-        for item_name, quantity in requested_items.items():
-            items_text.append(f"**{item_name}**: {quantity:,}")
-
-        embed.add_field(
-            name="Requested Items", value="\n".join(items_text), inline=False
-        )
-
-        embed.add_field(name="Status", value=request.status.capitalize(), inline=True)
-
-        embed.add_field(
-            name="Requested",
-            value=f"<t:{int(datetime.fromisoformat(request.created_at).timestamp())}:R>",
-            inline=True,
-        )
-
-        if request.updated_at:
-            embed.add_field(
-                name="Updated",
-                value=f"<t:{int(datetime.fromisoformat(request.updated_at).timestamp())}:R>",
-                inline=True,
-            )
-
-        embed.set_footer(text=f"User ID: {request.user_id}")
-
-        return embed
-
     def parse_item_input(self, input_text: str) -> Dict[str, int]:
         """Parse item input from user. Supports formats like:
         - 'Iron Ore: 50, Copper Ore: 100'
@@ -234,6 +188,7 @@ class InventoryManager:
         results = {}
 
         for item_name, requested_qty in requested_items.items():
+            will_remove = requested_qty
             current_item = self.db.get_item(request.guild_id, item_name)
 
             if not current_item:
@@ -243,16 +198,19 @@ class InventoryManager:
             if current_item.quantity < requested_qty:
                 results[item_name] = (
                     f"⚠️ Insufficient stock (have {current_item.quantity}, need {requested_qty})"
+                    f" will remove {current_item.quantity} instead"
                 )
-                continue
+                will_remove = current_item.quantity
 
             # Remove the items
             success = self.db.remove_item_quantity(
-                request.guild_id, item_name, requested_qty
+                request.guild_id, item_name, will_remove
             )
             if success:
                 results[item_name] = (
-                    f"✅ Removed {requested_qty} (remaining: {current_item.quantity - requested_qty})"
+                    f"✅ Removed {will_remove} (remaining: {current_item.quantity - will_remove})"
+                    if will_remove == requested_qty
+                    else f"⚠️ Removed {will_remove} (remaining: {current_item.quantity - will_remove}) - Originally requested {requested_qty}"
                 )
             else:
                 results[item_name] = f"❌ Failed to remove items"
@@ -272,7 +230,7 @@ class InventoryManager:
             title=f"📋 New Item Request #{request.id}",
             description=f"Request by {request.user_name}",
             color=Color.orange(),
-            timestamp=datetime.fromisoformat(request.created_at),
+            # timestamp=datetime.fromisoformat(request.created_at),
         )
 
         # Add user avatar if available
@@ -312,9 +270,14 @@ class InventoryManager:
 
         embed.add_field(name="Status", value="🟡 Pending Review", inline=True)
 
+        # Parse the datetime and assume it's UTC if no timezone info
+        request_time = datetime.fromisoformat(request.created_at)
+        if request_time.tzinfo is None:
+            request_time = request_time.replace(tzinfo=timezone.utc)
+
         embed.add_field(
             name="Requested",
-            value=f"<t:{int(datetime.fromisoformat(request.created_at).timestamp())}:R>",
+            value=f"<t:{int(request_time.timestamp())}:R>",
             inline=True,
         )
 
@@ -323,33 +286,36 @@ class InventoryManager:
         return embed
 
 
-class RequestView(ui.View):
-    """View with approve/deny buttons for item requests."""
-
-    def __init__(
-        self,
-        bot,
-        database: Database,
-        inventory_manager: "InventoryManager",
-        request_id: int,
-        timeout: int = 3600,
-    ):
-        super().__init__(timeout=timeout)
-        self.bot = bot
-        self.db = database
-        self.inventory = inventory_manager
+class ApproveButton(ui.Button):
+    """Persistent approve button for request views."""
+    
+    def __init__(self, request_id: int):
+        super().__init__(
+            label="✅ Approve",
+            style=ButtonStyle.green,
+            custom_id=f"approve_request_{request_id}"
+        )
         self.request_id = request_id
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Check if the user can interact with the buttons (admin only)."""
-        return self.inventory.is_admin(interaction.user, interaction.guild.id)
-
-    @ui.button(label="✅ Approve", style=ButtonStyle.green)
-    async def approve_button(self, interaction: discord.Interaction, button: ui.Button):
+    
+    async def callback(self, interaction: discord.Interaction):
         """Handle approve button click."""
+        # Get bot, database, and inventory manager from the bot
+        bot = interaction.client
+        db = getattr(bot, 'database', None)
+        inventory = getattr(bot, 'inventory_manager', None)
+        
+        if not db or not inventory:
+            await interaction.response.send_message("❌ Bot configuration error.", ephemeral=True)
+            return
+        
+        # Check permissions
+        if not inventory.is_admin(interaction.user, interaction.guild.id):
+            await interaction.response.send_message("❌ You don't have permission to approve requests.", ephemeral=True)
+            return
+        
         await interaction.response.defer()
 
-        request = self.db.get_request(self.request_id)
+        request = db.get_request(self.request_id)
         if not request:
             await interaction.followup.send("❌ Request not found.", ephemeral=True)
             return
@@ -361,10 +327,10 @@ class RequestView(ui.View):
             return
 
         # Update status first
-        self.db.update_request_status(self.request_id, "approved")
+        db.update_request_status(self.request_id, "approved")
 
         # Process the request (remove items from inventory)
-        results = await self.inventory.process_approved_request(request)
+        results = await inventory.process_approved_request(request)
 
         # Update the embed to show approved status
         embed = interaction.message.embeds[0]
@@ -401,15 +367,17 @@ class RequestView(ui.View):
             inline=True,
         )
 
-        # Disable all buttons
-        for item in self.children:
+        # Create new view with disabled buttons
+        view = RequestView(bot, db, inventory, self.request_id)
+        for item in view.children:
             item.disabled = True
 
-        await interaction.edit_original_response(embed=embed, view=self)
+        await interaction.edit_original_response(embed=embed, view=view)
 
         # Try to notify the user via DM
         try:
-            user = self.bot.get_user(request.user_id)
+            print(f"Notifying user {request.user_id} about approval...")
+            user = await bot.fetch_user(request.user_id)
             if user:
                 user_embed = discord.Embed(
                     title="✅ Request Approved!",
@@ -430,17 +398,81 @@ class RequestView(ui.View):
                 )
 
                 await user.send(embed=user_embed)
+                print("✅ User notified via DM")
+            else:
+                print(f"User {request.user_id} not found for DM notification.")
         except Exception as e:
             print(f"Could not send DM to user {request.user_id}: {e}")
 
-    @ui.button(label="❌ Deny", style=ButtonStyle.red)
-    async def deny_button(self, interaction: discord.Interaction, button: ui.Button):
-        """Handle deny button click."""
-        # Create a modal for denial reason
-        modal = DenyReasonModal(
-            self.bot, self.db, self.inventory, self.request_id, self
+
+class DenyButton(ui.Button):
+    """Persistent deny button for request views."""
+    
+    def __init__(self, request_id: int):
+        super().__init__(
+            label="❌ Deny",
+            style=ButtonStyle.red,
+            custom_id=f"deny_request_{request_id}"
         )
+        self.request_id = request_id
+    
+    async def callback(self, interaction: discord.Interaction):
+        """Handle deny button click."""
+        # Get bot, database, and inventory manager from the bot
+        bot = interaction.client
+        db = getattr(bot, 'database', None)
+        inventory = getattr(bot, 'inventory_manager', None)
+        
+        if not db or not inventory:
+            await interaction.response.send_message("❌ Bot configuration error.", ephemeral=True)
+            return
+        
+        # Check permissions
+        if not inventory.is_admin(interaction.user, interaction.guild.id):
+            await interaction.response.send_message("❌ You don't have permission to deny requests.", ephemeral=True)
+            return
+        
+        # Create a modal for denial reason
+        modal = DenyReasonModal(bot, db, inventory, self.request_id, None)
         await interaction.response.send_modal(modal)
+
+
+class RequestView(ui.View):
+    """View with approve/deny buttons for item requests."""
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+        database: Database,
+        inventory_manager: InventoryManager,
+        request_id: int,
+        timeout: int = None,
+    ):
+        super().__init__(timeout=timeout)
+        self.bot = bot
+        self.db = database
+        self.inventory = inventory_manager
+        self.request_id = request_id
+        
+        # Make buttons with request_id in custom_id for persistence
+        self.clear_items()
+        self.add_item(ApproveButton(request_id))
+        self.add_item(DenyButton(request_id))
+
+    @classmethod
+    def from_request_id(
+        cls,
+        bot: commands.Bot,
+        database: Database,
+        inventory_manager: InventoryManager,
+        request_id: int,
+    ):
+        """Create a RequestView from just a request ID."""
+        return cls(bot, database, inventory_manager, request_id, timeout=None)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Check if the user can interact with the buttons (admin only)."""
+        return self.inventory.is_admin(interaction.user, interaction.guild.id)
 
     async def on_timeout(self):
         """Handle view timeout."""
@@ -454,9 +486,9 @@ class DenyReasonModal(ui.Modal, title="Deny Request"):
 
     def __init__(
         self,
-        bot,
+        bot: commands.Bot,
         database: Database,
-        inventory_manager: "InventoryManager",
+        inventory_manager: InventoryManager,
         request_id: int,
         view: RequestView,
     ):
@@ -530,7 +562,8 @@ class DenyReasonModal(ui.Modal, title="Deny Request"):
 
         # Try to notify the user via DM
         try:
-            user = self.bot.get_user(request.user_id)
+            print(f"Notifying user {request.user_id} about denial...")
+            user = await self.bot.fetch_user(request.user_id)
             if user:
                 user_embed = discord.Embed(
                     title="❌ Request Denied",
@@ -556,5 +589,8 @@ class DenyReasonModal(ui.Modal, title="Deny Request"):
                 )
 
                 await user.send(embed=user_embed)
+                print("✅ User notified via DM")
+            else:
+                print(f"User {request.user_id} not found for DM notification.")
         except Exception as e:
             print(f"Could not send DM to user {request.user_id}: {e}")
