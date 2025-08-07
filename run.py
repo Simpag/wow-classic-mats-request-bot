@@ -27,13 +27,15 @@ class GuildBot(commands.Bot):
 
         # Database setup
         self.db = Database()
-        
+
         # Configure WoW server timezone
         set_wow_region(WOW_REGION)
         region_info = get_wow_region_info()
-        print(f"🌍 Default WoW Region: {region_info['region']} ({region_info['timezone']})")
+        print(
+            f"🌍 Default WoW Region: {region_info['region']} ({region_info['timezone']})"
+        )
         print(f"🕒 Current WoW Time: {region_info['current_time']}")
-         # Load guild-specific timezones from database
+        # Load guild-specific timezones from database
         self._load_guild_timezones()
 
     def _load_guild_timezones(self):
@@ -41,14 +43,16 @@ class GuildBot(commands.Bot):
         try:
             # Get all guild configs and set their timezones
             with self.db.get_connection() as conn:
-                cursor = conn.execute("SELECT guild_id, wow_region FROM guild_configs WHERE wow_region IS NOT NULL")
+                cursor = conn.execute(
+                    "SELECT guild_id, wow_region FROM guild_configs WHERE wow_region IS NOT NULL"
+                )
                 for row in cursor.fetchall():
                     guild_id, wow_region = row
                     set_guild_wow_region(guild_id, wow_region)
                     print(f"  └── Guild {guild_id}: {wow_region} timezone")
         except Exception as e:
             print(f"Warning: Could not load guild timezones: {e}")
-    
+
     async def setup_hook(self):
         """Setup the bot when it starts."""
         print("Bot setup starting...")

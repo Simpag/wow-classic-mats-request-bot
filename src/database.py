@@ -32,7 +32,7 @@ class GuildConfig:
     inventory_channel_id: Optional[int]
     inventory_message_id: Optional[int]
     admin_role_ids: str  # JSON string of role IDs
-    wow_region: str = 'US'  # Default to US region
+    wow_region: str = "US"  # Default to US region
 
 
 class Database:
@@ -95,16 +95,18 @@ class Database:
                 )
 
                 conn.commit()
-                
+
                 # Migration: Add wow_region column if it doesn't exist
                 try:
-                    conn.execute("ALTER TABLE guild_configs ADD COLUMN wow_region TEXT DEFAULT 'US'")
+                    conn.execute(
+                        "ALTER TABLE guild_configs ADD COLUMN wow_region TEXT DEFAULT 'US'"
+                    )
                     conn.commit()
                     print("✅ Added wow_region column to guild_configs")
                 except Exception:
                     # Column already exists, which is fine
                     pass
-                
+
                 print("✅ Database tables initialized successfully")
 
     # Guild Config Methods
@@ -123,7 +125,7 @@ class Database:
                         inventory_channel_id=row[1],
                         inventory_message_id=row[2],
                         admin_role_ids=row[3],
-                        wow_region=row[4] if row[4] else 'US',
+                        wow_region=row[4] if row[4] else "US",
                     )
                 return None
 

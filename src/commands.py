@@ -9,11 +9,21 @@ from datetime import datetime
 try:
     from .database import Database
     from .inventory_manager import InventoryManager, RequestView
-    from .timezone_utils import format_for_discord, get_wow_time, set_guild_wow_region, get_available_regions
+    from .timezone_utils import (
+        format_for_discord,
+        get_wow_time,
+        set_guild_wow_region,
+        get_available_regions,
+    )
 except ImportError:
     from database import Database
     from inventory_manager import InventoryManager, RequestView
-    from timezone_utils import format_for_discord, get_wow_time, set_guild_wow_region, get_available_regions
+    from timezone_utils import (
+        format_for_discord,
+        get_wow_time,
+        set_guild_wow_region,
+        get_available_regions,
+    )
 
 
 class InventoryCommands(commands.Cog):
@@ -246,19 +256,25 @@ class AdminCommands(commands.Cog):
     @app_commands.describe(
         channel="Channel where the inventory will be displayed",
         admin_roles="Comma-separated list of roles that can manage inventory (optional)",
-        timezone="WoW server timezone (US=Pacific, EU=Central European, OCE=Australian Eastern)"
+        timezone="WoW server timezone (US=Pacific, EU=Central European, OCE=Australian Eastern)",
     )
-    @app_commands.choices(timezone=[
-        app_commands.Choice(name='US - Pacific Time (PST/PDT)', value='US'),
-        app_commands.Choice(name='EU - Central European Time (CET/CEST)', value='EU'), 
-        app_commands.Choice(name='OCE - Australian Eastern Time (AEST/AEDT)', value='OCE')
-    ])
+    @app_commands.choices(
+        timezone=[
+            app_commands.Choice(name="US - Pacific Time (PST/PDT)", value="US"),
+            app_commands.Choice(
+                name="EU - Central European Time (CET/CEST)", value="EU"
+            ),
+            app_commands.Choice(
+                name="OCE - Australian Eastern Time (AEST/AEDT)", value="OCE"
+            ),
+        ]
+    )
     async def setup(
         self,
         interaction: Interaction,
         channel: discord.TextChannel,
         admin_roles: Optional[str] = None,
-        timezone: Optional[str] = 'US'
+        timezone: Optional[str] = "US",
     ):
         """Setup the inventory system."""
         if not interaction.user.guild_permissions.administrator:
@@ -286,7 +302,7 @@ class AdminCommands(commands.Cog):
             admin_role_ids=json.dumps(admin_role_ids),
             wow_region=timezone,
         )
-        
+
         # Set the timezone for this guild
         set_guild_wow_region(guild_id, timezone)
 
@@ -309,17 +325,17 @@ class AdminCommands(commands.Cog):
             embed.add_field(
                 name="Admin Roles", value="Server Administrators only", inline=False
             )
-            
+
         # Show timezone info
         timezone_names = {
-            'US': 'US - Pacific Time (PST/PDT)',
-            'EU': 'EU - Central European Time (CET/CEST)', 
-            'OCE': 'OCE - Australian Eastern Time (AEST/AEDT)'
+            "US": "US - Pacific Time (PST/PDT)",
+            "EU": "EU - Central European Time (CET/CEST)",
+            "OCE": "OCE - Australian Eastern Time (AEST/AEDT)",
         }
         embed.add_field(
-            name="WoW Server Timezone", 
-            value=timezone_names.get(timezone, f'{timezone} timezone'), 
-            inline=False
+            name="WoW Server Timezone",
+            value=timezone_names.get(timezone, f"{timezone} timezone"),
+            inline=False,
         )
 
         embed.add_field(
